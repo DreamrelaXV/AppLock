@@ -13,6 +13,7 @@ import android.os.Handler
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.core.content.getSystemService
@@ -46,6 +47,21 @@ class AppLockAccessibilityService : AccessibilityService() {
         private const val TAG = "AppLockAccessibility"
         private const val DEVICE_ADMIN_SETTINGS_PACKAGE = "com.android.settings"
         private const val APP_PACKAGE_PREFIX = "dev.pranav.applock"
+        private const val NOTIFICATION_SHADE_PACKAGE = "com.android.systemui"
+
+        /**
+         * Class name substrings that indicate the event originates from
+         * a notification panel interaction rather than a real app launch.
+         * Samsung OneUI and AOSP both use these views inside the shade.
+         */
+        private val NOTIFICATION_CLASS_INDICATORS = setOf(
+            "Notification",
+            "RemoteViews",
+            "StatusBar",
+            "HeadsUp",
+            "AlertWindow",
+            "Toast"
+        )
 
         @Volatile
         var isServiceRunning = false
@@ -153,6 +169,15 @@ class AppLockAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
+        // Skip events that originate from the notification panel / shade.
+        // On Samsung OneUI devices (e.g. Galaxy J6), interacting with a
+        // notification (expanding, collapsing, inline-reply) fires accessibility
+        // events with the *originating app's* package name, falsely triggering
+        // the lock screen. This guard prevents that.
+        if (isNotificationPanelEvent(event)) {
+            return
+        }
+
         // Skip if device is locked or app is excluded
         if (!isValidPackageForLocking(packageName)) {
             return
@@ -163,6 +188,65 @@ class AppLockAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             logError("Error processing package locking for $packageName", e)
         }
+    }
+
+    /**
+     * Checks whether the notification shade / panel is currently pulled down.
+     * Uses the accessibility window list: if any TYPE_SYSTEM window belongs
+     * to com.android.systemui it means the shade (or a SystemUI overlay like
+     * the quick-settings panel) is visible on screen.
+     */
+    @Suppress("DEPRECATION")
+    private fun isNotificationShadeActive(): Boolean {
+        return try {
+            windows.any { window ->
+                window.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
+                        window.root?.packageName?.toString() == NOTIFICATION_SHADE_PACKAGE
+            }
+        } catch (e: Exception) {
+            logError("Error checking notification shade state", e)
+            false
+        }
+    }
+
+    /**
+     * Detects whether an accessibility event was fired because the user
+     * interacted with a notification (expand, collapse, button tap, inline
+     * reply, etc.) rather than actually opening an app.
+     *
+     * On Samsung OneUI (Galaxy J6 and similar), expanding a notification in the
+     * panel fires TYPE_WINDOW_CONTENT_CHANGED (and sometimes
+     * TYPE_WINDOW_STATE_CHANGED) with the *originating app's* package name,
+     * which would falsely trigger the lock screen.
+     */
+    private fun isNotificationPanelEvent(event: AccessibilityEvent): Boolean {
+        val className = event.className?.toString() ?: return false
+
+        // 1. If the event's class name contains any notification-related indicator,
+        //    it is almost certainly a notification panel interaction.
+        if (NOTIFICATION_CLASS_INDICATORS.any { indicator ->
+                className.contains(indicator, ignoreCase = true)
+            }) {
+            LogUtils.d(TAG, "Notification class detected: $className (pkg=${event.packageName})")
+            return true
+        }
+
+        // 2. For TYPE_WINDOW_CONTENT_CHANGED events that don't have a
+        //    recognisable notification class: if the notification shade is
+        //    currently active, treat the event as a notification interaction.
+        //    TYPE_WINDOW_STATE_CHANGED is excluded here because it legitimately
+        //    fires when an app is brought to the foreground.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            isNotificationShadeActive()
+        ) {
+            LogUtils.d(
+                TAG,
+                "Content change while notification shade is active (pkg=${event.packageName}, class=$className). Skipping."
+            )
+            return true
+        }
+
+        return false
     }
 
     private fun handleWindowStateChanged(event: AccessibilityEvent) {
