@@ -277,8 +277,13 @@ class UsageLockService: Service() {
             putExtra("triggering_package", triggeringPackage)
         }
 
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            Log.w(TAG, "'Display over other apps' is not granted; lock screen may be blocked on this Android version")
+        }
+
         try {
             startActivity(intent)
+            AppLockManager.watchOverlayLaunch()
         } catch (e: Exception) {
             Log.e(TAG, "Error starting overlay for: $packageName", e)
             AppLockManager.isLockScreenShown.set(false)

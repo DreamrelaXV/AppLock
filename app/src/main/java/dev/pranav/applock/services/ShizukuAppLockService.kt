@@ -247,6 +247,7 @@ class ShizukuAppLockService : Service() {
 
         try {
             startActivity(intent)
+            AppLockManager.watchOverlayLaunch()
         } catch (e: Exception) {
             AppLockManager.isLockScreenShown.set(false)
             Log.e(TAG, "Failed to start password overlay: ${e.message}", e)

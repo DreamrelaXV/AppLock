@@ -74,6 +74,7 @@ class PasswordOverlayActivity: FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLockManager.isOverlayActivityAlive = true
 
         lockedPackageNameFromIntent = intent.getStringExtra("locked_package")
         triggeringPackageNameFromIntent = intent.getStringExtra("triggering_package")
@@ -139,7 +140,11 @@ class PasswordOverlayActivity: FragmentActivity() {
 
 
         val layoutParams = window.attributes
-        layoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        // An overlay-type window without the permission makes addView throw and the lock
+        // screen never shows, so only use it when "Display over other apps" is granted.
+        if (android.provider.Settings.canDrawOverlays(this)) {
+            layoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        }
         layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
         layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
 
@@ -342,6 +347,7 @@ class PasswordOverlayActivity: FragmentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        AppLockManager.isOverlayActivityAlive = false
         AppLockManager.isLockScreenShown.set(false)
         AppLockManager.reportBiometricAuthFinished()
         Log.d(TAG, "PasswordOverlayActivity onDestroy for $lockedPackageNameFromIntent")

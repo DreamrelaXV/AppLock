@@ -55,6 +55,24 @@ object AppLockManager {
     var temporarilyUnlockedApp: String = ""
     val appUnlockTimes = ConcurrentHashMap<String, Long>()
     val isLockScreenShown = AtomicBoolean(false)
+
+    /** True while PasswordOverlayActivity exists (onCreate..onDestroy). */
+    @Volatile
+    var isOverlayActivityAlive = false
+
+    /**
+     * Call right after startActivity(PasswordOverlayActivity). If the activity never comes up
+     * (background-launch blocked, missing overlay permission, ...) the "shown" flag would stay
+     * true forever and every later lock attempt would be skipped. This resets it.
+     */
+    fun watchOverlayLaunch(delayMs: Long = 2000L) {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (isLockScreenShown.get() && !isOverlayActivityAlive) {
+                LogUtils.d(TAG, "Overlay activity never started; resetting lock-screen state")
+                isLockScreenShown.set(false)
+            }
+        }, delayMs)
+    }
     var currentBiometricState: AppLockAccessibilityService.BiometricState? = null
 
     // Grace period tracking

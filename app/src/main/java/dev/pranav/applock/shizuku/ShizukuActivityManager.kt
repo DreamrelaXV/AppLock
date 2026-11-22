@@ -132,7 +132,7 @@ class ShizukuActivityManager(
         if (context.isDeviceLocked()) return
 
         getTasksWrapper().filterVisible().forEach {
-            val activity = it.topActivity!!
+            val activity = it.topActivity ?: return@forEach
             val packageName = activity.packageName
             val className = activity.className
 
@@ -223,10 +223,38 @@ private fun getTasksWrapper(): List<ActivityManager.RunningTaskInfo> = when {
         .orEmpty()
 }
 
+private val taskFieldCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Field?>()
+
+/**
+ * Reads a boolean field off a RunningTaskInfo without compiling a direct call to
+ * `isVisible()` / `isRunning`. Those don't exist on every Android version
+ * (isVisible() throws NoSuchMethodError on Android 10 and below).
+ */
+private fun ActivityManager.RunningTaskInfo.readBoolean(name: String, default: Boolean): Boolean {
+    val field = taskFieldCache.getOrPut(name) {
+        var cls: Class<*>? = ActivityManager.RunningTaskInfo::class.java
+        var found: java.lang.reflect.Field? = null
+        while (cls != null && cls != Any::class.java && found == null) {
+            found = runCatching {
+                HiddenApiBypass.getInstanceFields(cls!!)
+                    .firstOrNull { it.name == name && it.type == Boolean::class.javaPrimitiveType }
+            }.getOrNull()
+            cls = cls.superclass
+        }
+        found?.apply { isAccessible = true }
+    } ?: return default
+    return runCatching { field.getBoolean(this) }.getOrDefault(default)
+}
+
 private fun List<ActivityManager.RunningTaskInfo>.filterVisible(): List<ActivityManager.RunningTaskInfo> {
-    return filter {
-        it.isRunning && it.isVisible
+    val usable = filter {
+        it.topActivity != null &&
+                it.readBoolean("isRunning", true) &&
+                it.readBoolean("isVisible", true)
     }
+    // Before Android 11 there is no per-task visibility flag; the list is ordered
+    // most-recent-first, so only the first usable task is the foreground one.
+    return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) usable.take(1) else usable
 }
 
 fun TaskInfo.isFreeform(): Boolean {
