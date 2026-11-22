@@ -223,7 +223,7 @@ private fun getTasksWrapper(): List<ActivityManager.RunningTaskInfo> = when {
         .orEmpty()
 }
 
-private val taskFieldCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Field?>()
+private val taskFieldCache = HashMap<String, java.lang.reflect.Field?>() // allows null (field missing)
 
 /**
  * Reads a boolean field off a RunningTaskInfo without compiling a direct call to
@@ -231,7 +231,7 @@ private val taskFieldCache = java.util.concurrent.ConcurrentHashMap<String, java
  * (isVisible() throws NoSuchMethodError on Android 10 and below).
  */
 private fun ActivityManager.RunningTaskInfo.readBoolean(name: String, default: Boolean): Boolean {
-    val field = taskFieldCache.getOrPut(name) {
+    val field = synchronized(taskFieldCache) { taskFieldCache.getOrPut(name) {
         var cls: Class<*>? = ActivityManager.RunningTaskInfo::class.java
         var found: java.lang.reflect.Field? = null
         while (cls != null && cls != Any::class.java && found == null) {
@@ -242,7 +242,7 @@ private fun ActivityManager.RunningTaskInfo.readBoolean(name: String, default: B
             cls = cls.superclass
         }
         found?.apply { isAccessible = true }
-    } ?: return default
+    } } ?: return default
     return runCatching { field.getBoolean(this) }.getOrDefault(default)
 }
 
